@@ -491,7 +491,7 @@ textarea::placeholder{color:var(--ink4);}
     ResumeAI
   </div>
   <div class="nav-right">
-    <button class="nav-pill" id="keyNavBtn" onclick="openModal()">🔑 Add API Key</button>
+    <span class="nav-pill" style="background:var(--emerald-light);color:var(--emerald);border-color:rgba(26,107,74,0.25);cursor:default">🟢 AI Ready</span>
     <button class="nav-pill primary">Free to use</button>
   </div>
 </nav>
@@ -611,20 +611,7 @@ textarea::placeholder{color:var(--ink4);}
 
 </div><!-- /container -->
 
-<!-- MODAL -->
-<div class="modal-bg" id="keyModal">
-  <div class="modal">
-    <div class="modal-icon">🔑</div>
-    <h3>Anthropic API Key</h3>
-    <p>Your key is saved only in your browser and sent directly to Anthropic — never stored on any server.</p>
-    <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-…"/>
-    <p class="modal-hint">Get your key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> → API Keys</p>
-    <div class="modal-btns">
-      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
-      <button class="modal-save" onclick="saveKey()">Save & Continue</button>
-    </div>
-  </div>
-</div>
+<!-- No API key modal needed — key is on server -->
 
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
@@ -632,10 +619,8 @@ textarea::placeholder{color:var(--ink4);}
 <script>
 /* ── UTILS ── */
 const $ = id => document.getElementById(id);
-const getKey = () => localStorage.getItem('anthropic_key')||'';
 const delay = ms => new Promise(r=>setTimeout(r,ms));
 let resumeFile=null, optimizedText='';
-let pendingAction=null;
 
 function updateCharCount(el,countId){
   $(countId).textContent = el.value.length.toLocaleString()+' chars';
@@ -645,49 +630,6 @@ function showToast(msg,ms=2500){
   const t=$('toast'); t.innerHTML=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),ms);
 }
-
-/* ── MODAL ── */
-function openModal(){
-  // Pre-fill the input if key already exists
-  const existing = getKey();
-  if(existing) $('apiKeyInput').value = existing;
-  $('keyModal').classList.add('open');
-  setTimeout(()=>$('apiKeyInput').focus(), 100);
-}
-function closeModal(){
-  $('keyModal').classList.remove('open');
-  pendingAction = null; // clear pending if user cancels
-}
-function saveKey(){
-  const k=$('apiKeyInput').value.trim();
-  if(!k.startsWith('sk-')){ alert('Enter a valid Anthropic key (starts with sk-)'); return; }
-  localStorage.setItem('anthropic_key',k);
-  closeModal();
-  updateKeyStatus();
-  showToast('✓ API key saved — you won\'t need to enter it again!');
-  if(pendingAction){ const fn=pendingAction; pendingAction=null; fn(); }
-}
-function requireKey(fn){
-  if(getKey()){ fn(); }
-  else { pendingAction=fn; openModal(); }
-}
-function updateKeyStatus(){
-  const btn=$('keyNavBtn');
-  if(!btn) return;
-  if(getKey()){
-    btn.textContent='🟢 Key Saved';
-    btn.style.background='var(--emerald-light)';
-    btn.style.color='var(--emerald)';
-    btn.style.borderColor='rgba(26,107,74,0.25)';
-  } else {
-    btn.textContent='🔑 Add API Key';
-    btn.style.background='';
-    btn.style.color='';
-    btn.style.borderColor='';
-  }
-}
-// Run on page load to reflect saved state
-window.addEventListener('DOMContentLoaded', updateKeyStatus);
 
 /* ── TABS ── */
 function switchTab(name,btn){
@@ -752,16 +694,11 @@ function setStep(labels,idx,state){
   });
 }
 
-/* ── CALL API ── */
+/* ── CALL API via server proxy — no key needed in browser ── */
 async function callClaude(system,userContent,maxTokens=4000){
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+  const resp=await fetch('/api/claude',{
     method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key':getKey(),
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
+    headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       model:'claude-opus-4-5',
       max_tokens:maxTokens,
@@ -769,8 +706,10 @@ async function callClaude(system,userContent,maxTokens=4000){
       messages:[{role:'user',content:userContent}]
     })
   });
-  if(resp.status===401){ localStorage.removeItem('anthropic_key'); updateKeyStatus(); throw new Error('Invalid API key. Please re-enter your key.'); }
-  if(!resp.ok) throw new Error(`API error ${resp.status}`);
+  if(!resp.ok){
+    const err=await resp.json().catch(()=>({}));
+    throw new Error(err.error||`Server error ${resp.status}`);
+  }
   const d=await resp.json();
   return d.content.map(b=>b.text||'').join('');
 }
@@ -782,7 +721,7 @@ async function runOptimizer(){
   const jdText=$('jdText').value.trim();
   if(!resumeFile){ showToast('⚠ Please upload your resume first'); return; }
   if(!jdText){ showToast('⚠ Please add the job description'); return; }
-  requireKey(async()=>{
+  {
     const btn=$('runBtn'), spinner=$('optSpinner'), btnText=$('runBtnText');
     btn.disabled=true; spinner.style.display='block'; btnText.textContent='Optimizing…';
     $('resultArea').innerHTML='';
@@ -914,10 +853,9 @@ Return ONLY valid JSON, no markdown, no backticks:
 
     }catch(err){
       $('resultArea').innerHTML=`<div class="error-box"><strong>Error:</strong> ${err.message}</div>`;
-      if(err.message.includes('key')) setTimeout(openModal,300);
     }
     btn.disabled=false; spinner.style.display='none'; btnText.textContent='Analyze & Optimize Resume';
-  });
+  }
 }
 
 /* ══════════════════════════════════════
@@ -926,7 +864,7 @@ Return ONLY valid JSON, no markdown, no backticks:
 async function runGrammarCheck(){
   const text=$('grammarText').value.trim();
   if(!text){ showToast('⚠ Please paste your resume text first'); return; }
-  requireKey(async()=>{
+  {
     const btn=$('grammarBtn'), spinner=$('gramSpinner'), btnText=$('gramBtnText');
     btn.disabled=true; spinner.style.display='block'; btnText.textContent='Checking…';
     $('grammarResultArea').innerHTML='';

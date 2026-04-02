@@ -491,7 +491,7 @@ textarea::placeholder{color:var(--ink4);}
     ResumeAI
   </div>
   <div class="nav-right">
-    <button class="nav-pill" onclick="openModal()">🔑 API Key</button>
+    <button class="nav-pill" id="keyNavBtn" onclick="openModal()">🔑 Add API Key</button>
     <button class="nav-pill primary">Free to use</button>
   </div>
 </nav>
@@ -635,6 +635,7 @@ const $ = id => document.getElementById(id);
 const getKey = () => localStorage.getItem('anthropic_key')||'';
 const delay = ms => new Promise(r=>setTimeout(r,ms));
 let resumeFile=null, optimizedText='';
+let pendingAction=null;
 
 function updateCharCount(el,countId){
   $(countId).textContent = el.value.length.toLocaleString()+' chars';
@@ -646,17 +647,47 @@ function showToast(msg,ms=2500){
 }
 
 /* ── MODAL ── */
-function openModal(){ $('keyModal').classList.add('open'); }
-function closeModal(){ $('keyModal').classList.remove('open'); }
+function openModal(){
+  // Pre-fill the input if key already exists
+  const existing = getKey();
+  if(existing) $('apiKeyInput').value = existing;
+  $('keyModal').classList.add('open');
+  setTimeout(()=>$('apiKeyInput').focus(), 100);
+}
+function closeModal(){
+  $('keyModal').classList.remove('open');
+  pendingAction = null; // clear pending if user cancels
+}
 function saveKey(){
   const k=$('apiKeyInput').value.trim();
   if(!k.startsWith('sk-')){ alert('Enter a valid Anthropic key (starts with sk-)'); return; }
   localStorage.setItem('anthropic_key',k);
-  closeModal(); showToast('✓ API key saved');
-  if(pendingAction){ pendingAction(); pendingAction=null; }
+  closeModal();
+  updateKeyStatus();
+  showToast('✓ API key saved — you won\'t need to enter it again!');
+  if(pendingAction){ const fn=pendingAction; pendingAction=null; fn(); }
 }
-let pendingAction=null;
-function requireKey(fn){ if(getKey()){ fn(); } else { pendingAction=fn; openModal(); } }
+function requireKey(fn){
+  if(getKey()){ fn(); }
+  else { pendingAction=fn; openModal(); }
+}
+function updateKeyStatus(){
+  const btn=$('keyNavBtn');
+  if(!btn) return;
+  if(getKey()){
+    btn.textContent='🟢 Key Saved';
+    btn.style.background='var(--emerald-light)';
+    btn.style.color='var(--emerald)';
+    btn.style.borderColor='rgba(26,107,74,0.25)';
+  } else {
+    btn.textContent='🔑 Add API Key';
+    btn.style.background='';
+    btn.style.color='';
+    btn.style.borderColor='';
+  }
+}
+// Run on page load to reflect saved state
+window.addEventListener('DOMContentLoaded', updateKeyStatus);
 
 /* ── TABS ── */
 function switchTab(name,btn){
@@ -738,7 +769,7 @@ async function callClaude(system,userContent,maxTokens=4000){
       messages:[{role:'user',content:userContent}]
     })
   });
-  if(resp.status===401){ localStorage.removeItem('anthropic_key'); throw new Error('Invalid API key. Please re-enter your key.'); }
+  if(resp.status===401){ localStorage.removeItem('anthropic_key'); updateKeyStatus(); throw new Error('Invalid API key. Please re-enter your key.'); }
   if(!resp.ok) throw new Error(`API error ${resp.status}`);
   const d=await resp.json();
   return d.content.map(b=>b.text||'').join('');
